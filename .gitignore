@@ -351,3 +351,6 @@ ASALocalRun/
 **/config_full.json
 
 appsettings.*.json
+.vscode/extensions.json
+.vscode/tasks.json
+.vscode/launch.json
