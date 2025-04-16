@@ -8,6 +8,10 @@ using Microsoft.Data.SqlClient;
 using Azure.AI.OpenAI;
 using Azure;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.Connectors.OpenAI;
+using Microsoft.SemanticKernel.ChatCompletion;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +19,11 @@ var builder = WebApplication.CreateBuilder(args);
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+var config = new ConfigurationBuilder()
+    .AddUserSecrets<Program>()
+    .AddEnvironmentVariables()
+    .Build();
 
 // Use dependency injection to inject services into the application.
 builder.Services.AddSingleton<IVectorizationService, VectorizationService>();
@@ -43,6 +52,20 @@ builder.Services.AddSingleton<CosmosClient>((_) =>
         tokenCredential: credential
     );
     return client;
+});
+
+builder.Services.AddSingleton<Kernel>((_) =>
+{
+    // Register the Kernel service with dependency injection, configuring it to use Azure OpenAI for chat completion.
+    IKernelBuilder kernelBuilder = Kernel.CreateBuilder();
+    kernelBuilder.AddAzureOpenAIChatCompletion(
+            deploymentName: builder.Configuration["AzureOpenAI:DeploymentName"]!,
+            endpoint: builder.Configuration["AzureOpenAI:Endpoint"]!,
+            apiKey: builder.Configuration["AzureOpenAI:ApiKey"]!
+        );
+    var databaseService = _.GetRequiredService<IDatabaseService>();
+    kernelBuilder.Plugins.AddFromObject(databaseService);
+    return kernelBuilder.Build();
 });
 
 // Create a single instance of the AzureOpenAIClient to be shared across the application.
@@ -107,8 +130,14 @@ app.MapGet("/Hotels/{hotelId}/Bookings/{min_date}", async (int hotelId, DateTime
 app.MapPost("/Chat", async Task<string> (HttpRequest request) =>
 {
     var message = await Task.FromResult(request.Form["message"]);
-    
-    return "This endpoint is not yet available.";
+    var kernel = app.Services.GetRequiredService<Kernel>();
+    var chatCompletionService = kernel.GetRequiredService<IChatCompletionService>();
+    var executionSettings = new OpenAIPromptExecutionSettings
+    {
+        ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
+    };
+    var response = await chatCompletionService.GetChatMessageContentAsync(message.ToString(), executionSettings, kernel);
+    return response?.Content!;
 })
     .WithName("Chat")
     .WithOpenApi();
